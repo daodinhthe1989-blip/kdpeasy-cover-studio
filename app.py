@@ -20,16 +20,17 @@ WELCOME_MESSAGE = "Welcome, VIP Creator!"
 # 📖 Prompt Builder — dropdown options
 # ═══════════════════════════════════════════════════════════════════
 BOOK_TYPES = {
-    "📖 Picture book (ages 3-8)":     "picture book cover",
-    "🎨 Coloring book":               "coloring book cover with bold black outlines on white",
-    "📕 Chapter book / Novel":         "chapter book cover",
-    "📓 Journal / Notebook":           "journal cover",
-    "📗 Workbook / Activity book":     "activity workbook cover",
-    "📔 Planner":                      "planner cover",
+    "📖 Picture book (ages 3-8)":     "picture book cover illustration",
+    "🎨 Coloring book — COVER (colorful)": "vibrant fully-colored painted book cover illustration, bright saturated colors that pop on Amazon thumbnails, showcasing a colored version of the coloring pages inside",
+    "📝 Coloring book — INTERIOR page":    "black-and-white line-art coloring book interior page with bold clean outlines on plain white background, ready for children to color in, no shading, no grayscale",
+    "📕 Chapter book / Novel":         "chapter book cover illustration",
+    "📓 Journal / Notebook":           "journal cover design",
+    "📗 Workbook / Activity book":     "activity workbook cover illustration",
+    "📔 Planner":                      "planner cover design",
     "📘 Guide / How-to":               "instructional guide book cover",
-    "📙 Recipe book":                  "recipe book cover",
-    "📚 Memoir / Personal essay":      "memoir book cover",
-    "📖 Devotional / Christian":       "devotional book cover",
+    "📙 Recipe book":                  "recipe book cover design",
+    "📚 Memoir / Personal essay":      "memoir book cover illustration",
+    "📖 Devotional / Christian":       "devotional book cover design",
 }
 
 GENRES = {
@@ -137,6 +138,13 @@ TEXT_POSITIONS = {
     "Top":     "top",
     "Center":  "center",
     "Bottom":  "bottom",
+}
+
+PANEL_STYLES = {
+    "🚫 None (just shadow)":                "none",
+    "🎨 Rounded panel behind text":         "rounded",
+    "📏 Solid strip across cover":          "strip",
+    "🌫️ Gradient darken title area":       "gradient",
 }
 
 # ═══════════════════════════════════════════════════════════════════
@@ -431,7 +439,10 @@ def compose_cover(art_bytes: bytes, page_w_in: float, page_h_in: float,
                   body_font_kind: str, body_font_weight: Optional[int],
                   title_position: str, text_color: str,
                   auto_contrast: bool, add_bleed: bool,
-                  add_shadow: bool) -> Image.Image:
+                  add_shadow: bool,
+                  panel_style: str = "none",
+                  panel_color: str = "#000000",
+                  panel_opacity: float = 0.55) -> Image.Image:
     bleed_in = 0.125 if add_bleed else 0.0
     trim_w_px = int(round(page_w_in * dpi))
     trim_h_px = int(round(page_h_in * dpi))
@@ -484,6 +495,51 @@ def compose_cover(art_bytes: bytes, page_w_in: float, page_h_in: float,
         text_fill = (255, 255, 255) if avg_lum < 130 else (25, 25, 45)
     else:
         text_fill = hex_to_rgb(text_color)
+
+    # Draw text background panel (if enabled) BEFORE the text
+    if panel_style != "none":
+        panel_rgb = hex_to_rgb(panel_color)
+        alpha = int(255 * max(0.0, min(1.0, panel_opacity)))
+        overlay = Image.new("RGBA", (final_w, final_h), (0, 0, 0, 0))
+        over_draw = ImageDraw.Draw(overlay)
+        pad_x = int(trim_w_px * 0.04)
+        pad_y = int(trim_h_px * 0.02)
+
+        if panel_style == "rounded":
+            box = (
+                max(bleed_px, safe_left - pad_x),
+                max(bleed_px, title_zone_top - pad_y),
+                min(final_w - bleed_px, safe_right + pad_x),
+                min(final_h - bleed_px, title_zone_bottom + pad_y),
+            )
+            radius = int(min(box[2] - box[0], box[3] - box[1]) * 0.08)
+            over_draw.rounded_rectangle(box, radius=radius,
+                                         fill=panel_rgb + (alpha,))
+        elif panel_style == "strip":
+            box = (
+                0,
+                max(bleed_px, title_zone_top - pad_y),
+                final_w,
+                min(final_h - bleed_px, title_zone_bottom + pad_y),
+            )
+            over_draw.rectangle(box, fill=panel_rgb + (alpha,))
+        elif panel_style == "gradient":
+            # Vertical gradient darkening across the title zone
+            grad_top = max(bleed_px, title_zone_top - pad_y * 2)
+            grad_bottom = min(final_h - bleed_px, title_zone_bottom + pad_y * 2)
+            grad_h = max(1, grad_bottom - grad_top)
+            for row in range(grad_top, grad_bottom):
+                # Ease-in-out alpha peak in middle
+                t = (row - grad_top) / grad_h
+                bell = 1 - abs(2 * t - 1)
+                row_alpha = int(alpha * bell)
+                over_draw.line([(0, row), (final_w, row)],
+                                fill=panel_rgb + (row_alpha,))
+
+        canvas = Image.alpha_composite(
+            canvas.convert("RGBA"), overlay
+        ).convert("RGB")
+        draw = ImageDraw.Draw(canvas)
 
     # Title
     if title.strip():
@@ -546,11 +602,16 @@ def compose_cover_cached(art_bytes: bytes, page_w_in: float, page_h_in: float,
                           body_font_kind: str, body_font_weight: Optional[int],
                           title_position: str, text_color: str,
                           auto_contrast: bool, add_bleed: bool,
-                          add_shadow: bool, _v: int = 1) -> bytes:
+                          add_shadow: bool,
+                          panel_style: str = "none",
+                          panel_color: str = "#000000",
+                          panel_opacity: float = 0.55,
+                          _v: int = 2) -> bytes:
     img = compose_cover(
         art_bytes, page_w_in, page_h_in, dpi, title, subtitle, author,
         title_font_kind, title_font_weight, body_font_kind, body_font_weight,
         title_position, text_color, auto_contrast, add_bleed, add_shadow,
+        panel_style, panel_color, panel_opacity,
     )
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
@@ -742,6 +803,30 @@ with tab2:
         cc_shadow = st.checkbox("Add subtle text shadow (recommended)",
                                  value=True, key="cc_shadow")
 
+        st.markdown("**Text background panel** (recommended for busy art)")
+        cc_panel_label = st.selectbox(
+            "Panel style",
+            list(PANEL_STYLES.keys()),
+            index=1,
+            label_visibility="collapsed",
+            key="cc_panel_label",
+            help="A semi-transparent panel behind the title makes text readable "
+                 "even when the art has busy details in the title area.",
+        )
+        cc_panel_style = PANEL_STYLES[cc_panel_label]
+
+        if cc_panel_style != "none":
+            pcol1, pcol2 = st.columns([1, 1])
+            with pcol1:
+                cc_panel_color = st.color_picker("Panel colour", "#000000",
+                                                  key="cc_panel_color")
+            with pcol2:
+                cc_panel_opacity = st.slider("Opacity", 0.0, 1.0, 0.55, 0.05,
+                                              key="cc_panel_opacity")
+        else:
+            cc_panel_color = "#000000"
+            cc_panel_opacity = 0.55
+
         cc_bleed = st.checkbox("Include KDP bleed (0.125\")",
                                 value=True, key="cc_bleed")
 
@@ -763,6 +848,7 @@ with tab2:
                     body_font_kind, body_font_weight,
                     TEXT_POSITIONS[cc_position], cc_color,
                     bool(cc_auto), bool(cc_bleed), bool(cc_shadow),
+                    cc_panel_style, cc_panel_color, float(cc_panel_opacity),
                 )
                 st.markdown('<div class="preview-box">', unsafe_allow_html=True)
                 st.image(preview_bytes(png), use_container_width=True)
